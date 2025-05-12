@@ -1,0 +1,566 @@
+// ==UserScript==
+// @name         头歌实践教学平台复制粘贴功能增强(支持外部复制)
+// @namespace    http://tampermonkey.net/
+// @version      1.5
+// @description  解除头歌平台的复制粘贴限制，支持完整的复制和粘贴功能，包括从外部应用复制粘贴
+// @author       You
+// @match        *://*.educoder.net/*
+// @match        *://*.educg.net/*
+// @match        *://educoder.net/*
+// @grant        GM_setClipboard
+// @grant        GM_getClipboard
+// @grant        window.focus
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    
+    // 主函数 - 启用复制和粘贴功能
+    function enableCopyAndPaste() {
+        // 保存原始的剪贴板数据
+        let savedClipboardData = null;
+        
+        // ===== 复制功能增强 =====
+        
+        // 启用文本选择
+        function enableTextSelection() {
+            const style = document.createElement('style');
+            style.textContent = `
+                * {
+                    user-select: auto !important;
+                    -webkit-user-select: auto !important;
+                    -moz-user-select: auto !important;
+                    -ms-user-select: auto !important;
+                }
+                
+                [unselectable="on"]:not(input):not(textarea):not([contenteditable="true"]) {
+                    user-select: auto !important;
+                    -webkit-user-select: auto !important;
+                    -moz-user-select: auto !important;
+                    -ms-user-select: auto !important;
+                }
+                
+                .no-copy:not(input):not(textarea):not([contenteditable="true"]), 
+                .nocopy:not(input):not(textarea):not([contenteditable="true"]), 
+                .disable-copy:not(input):not(textarea):not([contenteditable="true"]) {
+                    user-select: auto !important;
+                    -webkit-user-select: auto !important;
+                    -moz-user-select: auto !important;
+                    -ms-user-select: auto !important;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        // 处理复制事件
+        function handleCopyEvent() {
+            // 确保复制事件不被阻止
+            document.addEventListener('copy', function(e) {
+                // 如果有选中的文本，保存它
+                const selection = window.getSelection();
+                if (selection && selection.toString().trim() !== '') {
+                    savedClipboardData = selection.toString();
+                    
+                    // 如果事件被阻止，我们手动设置剪贴板数据
+                    if (e.defaultPrevented) {
+                        e.stopImmediatePropagation();
+                        e.preventDefault();
+                        
+                        // 尝试使用剪贴板API
+                        if (e.clipboardData) {
+                            e.clipboardData.setData('text/plain', savedClipboardData);
+                        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(savedClipboardData).catch(err => {
+                                console.error('无法写入剪贴板:', err);
+                            });
+                        }
+                        
+                        // 尝试使用Tampermonkey API
+                        if (typeof GM_setClipboard !== 'undefined') {
+                            GM_setClipboard(savedClipboardData, 'text');
+                        }
+                    }
+                }
+                
+                return true;
+            }, true);
+            
+            // 添加快捷键支持
+            document.addEventListener('keydown', function(e) {
+                // 检测Ctrl+C (Windows) 或 Command+C (Mac)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                    const selection = window.getSelection();
+                    if (selection && selection.toString().trim() !== '') {
+                        savedClipboardData = selection.toString();
+                        
+                        // 尝试使用剪贴板API
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(savedClipboardData).catch(err => {
+                                console.error('无法写入剪贴板:', err);
+                            });
+                        }
+                        
+                        // 尝试使用Tampermonkey API
+                        if (typeof GM_setClipboard !== 'undefined') {
+                            GM_setClipboard(savedClipboardData, 'text');
+                        }
+                    }
+                }
+            }, true);
+        }
+        
+        // ===== 粘贴功能增强 =====
+        
+        // 处理粘贴事件
+        function handlePasteEvent() {
+            document.addEventListener('paste', function(e) {
+                // 获取当前焦点元素
+                const activeElement = document.activeElement;
+                const isInput = activeElement.tagName === 'INPUT' || 
+                               activeElement.tagName === 'TEXTAREA' || 
+                               activeElement.isContentEditable;
+                
+                if (isInput) {
+                    // 阻止默认粘贴行为
+                    e.stopPropagation();
+                    e.preventDefault();
+                    
+                    // 获取粘贴内容
+                    let pasteContent = '';
+                    
+                    // 首先尝试从剪贴板事件获取
+                    if (e.clipboardData && e.clipboardData.getData) {
+                        pasteContent = e.clipboardData.getData('text/plain');
+                    }
+                    
+                    // 如果内容为空或只有空格，尝试使用保存的内容
+                    if (!pasteContent || pasteContent.trim() === '') {
+                        // 尝试从保存的剪贴板数据获取
+                        if (savedClipboardData) {
+                            pasteContent = savedClipboardData;
+                        }
+                        
+                        // 如果仍然为空，尝试使用Tampermonkey API
+                        if ((!pasteContent || pasteContent.trim() === '') && typeof GM_getClipboard !== 'undefined') {
+                            try {
+                                pasteContent = GM_getClipboard();
+                            } catch (err) {
+                                console.error('无法通过GM_getClipboard获取剪贴板内容:', err);
+                            }
+                        }
+                        
+                        // 如果仍然为空，尝试使用剪贴板API
+                        if (!pasteContent || pasteContent.trim() === '') {
+                            // 尝试使用异步剪贴板API
+                            if (navigator.clipboard && navigator.clipboard.readText) {
+                                navigator.clipboard.readText().then(text => {
+                                    if (text && text.trim() !== '') {
+                                        insertTextAtCursor(activeElement, text);
+                                    } else {
+                                        // 如果仍然为空，提示用户
+                                        console.error('剪贴板内容为空');
+                                    }
+                                }).catch(err => {
+                                    console.error('无法访问剪贴板:', err);
+                                    // 提示用户手动粘贴
+                                    alert('无法自动粘贴内容。请尝试使用右上角的"粘贴"按钮。');
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    
+                    // 如果有内容，直接插入到当前位置
+                    if (pasteContent) {
+                        insertTextAtCursor(activeElement, pasteContent);
+                    }
+                }
+            }, true);
+            
+            // 添加粘贴快捷键支持
+            document.addEventListener('keydown', function(e) {
+                // 检测Ctrl+V (Windows) 或 Command+V (Mac)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                    // 检查当前焦点元素是否为输入框
+                    const activeElement = document.activeElement;
+                    const isInput = activeElement.tagName === 'INPUT' || 
+                                   activeElement.tagName === 'TEXTAREA' || 
+                                   activeElement.isContentEditable;
+                    
+                    if (isInput) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        // 尝试多种方式获取剪贴板内容
+                        getClipboardContent().then(text => {
+                            if (text) {
+                                insertTextAtCursor(activeElement, text);
+                            }
+                        });
+                    }
+                }
+            }, true);
+        }
+        
+        // 获取剪贴板内容的综合方法
+        async function getClipboardContent() {
+            // 首先检查保存的内容
+            if (savedClipboardData) {
+                return savedClipboardData;
+            }
+            
+            // 尝试使用Tampermonkey API
+            if (typeof GM_getClipboard !== 'undefined') {
+                try {
+                    const gmClipboard = GM_getClipboard();
+                    if (gmClipboard && gmClipboard.trim() !== '') {
+                        return gmClipboard;
+                    }
+                } catch (err) {
+                    console.error('GM_getClipboard失败:', err);
+                }
+            }
+            
+            // 尝试使用剪贴板API
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                try {
+                    const clipboardText = await navigator.clipboard.readText();
+                    if (clipboardText && clipboardText.trim() !== '') {
+                        return clipboardText;
+                    }
+                } catch (err) {
+                    console.error('navigator.clipboard.readText失败:', err);
+                }
+            }
+            
+            // 如果都失败了，返回null
+            return null;
+        }
+        
+        // 辅助函数：在光标位置插入文本
+        function insertTextAtCursor(element, text) {
+            if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+                // 标准输入框
+                const startPos = element.selectionStart;
+                const endPos = element.selectionEnd;
+                const beforeText = element.value.substring(0, startPos);
+                const afterText = element.value.substring(endPos);
+                
+                // 设置新值
+                element.value = beforeText + text + afterText;
+                
+                // 移动光标到插入文本后
+                element.selectionStart = element.selectionEnd = startPos + text.length;
+                
+                // 触发input事件以通知可能的监听器
+                const inputEvent = new Event('input', { bubbles: true });
+                element.dispatchEvent(inputEvent);
+                
+                // 触发change事件
+                const changeEvent = new Event('change', { bubbles: true });
+                element.dispatchEvent(changeEvent);
+            } else if (element.isContentEditable) {
+                // 可编辑div等元素
+                // 保存选区
+                const selection = window.getSelection();
+                const range = selection.getRangeAt(0);
+                
+                // 删除当前选中内容
+                range.deleteContents();
+                
+                // 创建文本节点并插入
+                const textNode = document.createTextNode(text);
+                range.insertNode(textNode);
+                
+                // 移动光标到插入文本后
+                range.setStartAfter(textNode);
+                range.setEndAfter(textNode);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                // 触发input事件
+                const inputEvent = new Event('input', { bubbles: true });
+                element.dispatchEvent(inputEvent);
+                
+                // 触发change事件
+                const changeEvent = new Event('change', { bubbles: true });
+                element.dispatchEvent(changeEvent);
+            }
+        }
+        
+        // ===== 通用功能 =====
+        
+        // 启用右键菜单
+        function enableContextMenu() {
+            document.addEventListener('contextmenu', function(e) {
+                // 不阻止默认右键菜单
+                return true;
+            }, true);
+            
+            // 覆盖document.oncontextmenu
+            if (document.oncontextmenu) {
+                document.oncontextmenu = null;
+            }
+            
+            Object.defineProperty(document, 'oncontextmenu', {
+                get: function() { return null; },
+                set: function() { return null; },
+                configurable: true
+            });
+        }
+        
+        // 移除事件处理程序
+        function removeEventHandlers() {
+            const events = ['copy', 'cut', 'paste', 'contextmenu', 'selectstart'];
+            const elements = document.querySelectorAll('*');
+            
+            events.forEach(event => {
+                for (let i = 0; i < elements.length; i++) {
+                    const element = elements[i];
+                    if (element['on' + event]) {
+                        element['on' + event] = null;
+                    }
+                    if (element.getAttribute && element.getAttribute('on' + event)) {
+                        element.removeAttribute('on' + event);
+                    }
+                }
+            });
+        }
+        
+        // 监视DOM变化
+        function observeDOMChanges() {
+            const observer = new MutationObserver(function(mutations) {
+                let needsReapply = false;
+                
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                        for (let i = 0; i < mutation.addedNodes.length; i++) {
+                            const node = mutation.addedNodes[i];
+                            if (node.nodeType === 1) { // 元素节点
+                                const events = ['copy', 'cut', 'paste', 'contextmenu', 'selectstart'];
+                                
+                                // 检查是否是非输入元素
+                                const tagName = node.tagName ? node.tagName.toLowerCase() : '';
+                                const isEditable = node.isContentEditable || 
+                                                  tagName === 'input' || 
+                                                  tagName === 'textarea' || 
+                                                  node.getAttribute('role') === 'textbox';
+                                
+                                if (!isEditable) {
+                                    // 只处理非输入元素上的复制粘贴限制
+                                    events.forEach(event => {
+                                        if (node.hasAttribute && node.hasAttribute('on' + event)) {
+                                            node.removeAttribute('on' + event);
+                                            needsReapply = true;
+                                        }
+                                    });
+                                    
+                                    // 移除可能的class限制
+                                    if (node.classList) {
+                                        if (node.classList.contains('no-copy') || 
+                                            node.classList.contains('nocopy') || 
+                                            node.classList.contains('disable-copy')) {
+                                            node.classList.remove('no-copy', 'nocopy', 'disable-copy');
+                                            needsReapply = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // 只在需要时重新应用处理
+                if (needsReapply) {
+                    removeEventHandlers();
+                }
+            });
+            
+            // 观察整个文档的变化
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['oncopy', 'oncut', 'onpaste', 'oncontextmenu', 'onselectstart']
+            });
+        }
+        
+        // 添加复制粘贴按钮（备用方案）
+        function addCopyPasteButtons() {
+            // 创建按钮容器
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.position = 'fixed';
+            buttonContainer.style.top = '10px';
+            buttonContainer.style.right = '10px';
+            buttonContainer.style.zIndex = '9999';
+            buttonContainer.style.display = 'flex';
+            buttonContainer.style.flexDirection = 'column';
+            buttonContainer.style.gap = '5px';
+            
+            // 创建复制按钮
+            const copyButton = document.createElement('button');
+            copyButton.textContent = '复制选中文本';
+            copyButton.style.padding = '5px 10px';
+            copyButton.style.backgroundColor = '#4CAF50';
+            copyButton.style.color = 'white';
+            copyButton.style.border = 'none';
+            copyButton.style.borderRadius = '4px';
+            copyButton.style.cursor = 'pointer';
+            copyButton.onclick = function() {
+                const selection = window.getSelection();
+                if (selection && selection.toString().trim() !== '') {
+                    const text = selection.toString();
+                    
+                    // 保存到我们的变量
+                    savedClipboardData = text;
+                    
+                    // 尝试使用多种方式复制
+                    let copySuccess = false;
+                    
+                    // 尝试使用Tampermonkey API
+                    if (typeof GM_setClipboard !== 'undefined') {
+                        try {
+                            GM_setClipboard(text, 'text');
+                            copySuccess = true;
+                        } catch (err) {
+                            console.error('GM_setClipboard失败:', err);
+                        }
+                    }
+                    
+                    // 如果Tampermonkey API失败，尝试使用剪贴板API
+                    if (!copySuccess && navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(text)
+                            .then(() => {
+                                copyButton.textContent = '已复制!';
+                                setTimeout(() => {
+                                    copyButton.textContent = '复制选中文本';
+                                }, 2000);
+                            })
+                            .catch(err => {
+                                console.error('无法复制:', err);
+                                copyButton.textContent = '复制失败!';
+                                setTimeout(() => {
+                                    copyButton.textContent = '复制选中文本';
+                                }, 2000);
+                            });
+                    } else if (copySuccess) {
+                        copyButton.textContent = '已复制!';
+                        setTimeout(() => {
+                            copyButton.textContent = '复制选中文本';
+                        }, 2000);
+                    }
+                }
+            };
+            
+            // 创建粘贴按钮
+            const pasteButton = document.createElement('button');
+            pasteButton.textContent = '粘贴';
+            pasteButton.style.padding = '5px 10px';
+            pasteButton.style.backgroundColor = '#2196F3';
+            pasteButton.style.color = 'white';
+            pasteButton.style.border = 'none';
+            pasteButton.style.borderRadius = '4px';
+            pasteButton.style.cursor = 'pointer';
+            pasteButton.onclick = async function() {
+                // 获取当前焦点元素
+                const activeElement = document.activeElement;
+                const isInput = activeElement.tagName === 'INPUT' || 
+                               activeElement.tagName === 'TEXTAREA' || 
+                               activeElement.isContentEditable;
+                
+                if (isInput) {
+                    // 尝试获取剪贴板内容
+                    const clipboardText = await getClipboardContent();
+                    
+                    if (clipboardText) {
+                        insertTextAtCursor(activeElement, clipboardText);
+                        pasteButton.textContent = '已粘贴!';
+                        setTimeout(() => {
+                            pasteButton.textContent = '粘贴';
+                        }, 2000);
+                    } else {
+                        pasteButton.textContent = '粘贴失败!';
+                        setTimeout(() => {
+                            pasteButton.textContent = '粘贴';
+                        }, 2000);
+                        alert('无法获取剪贴板内容。请尝试手动复制内容后再粘贴。');
+                    }
+                } else {
+                    alert('请先点击一个输入框，再点击粘贴按钮');
+                }
+            };
+            
+            // 创建外部粘贴输入框
+            const pasteInput = document.createElement('textarea');
+            pasteInput.placeholder = '在此处粘贴外部内容，然后点击"使用此内容"';
+            pasteInput.style.width = '200px';
+            pasteInput.style.height = '60px';
+            pasteInput.style.marginTop = '5px';
+            pasteInput.style.padding = '5px';
+            pasteInput.style.border = '1px solid #ccc';
+            pasteInput.style.borderRadius = '4px';
+            
+            // 创建使用输入框内容的按钮
+            const useInputButton = document.createElement('button');
+            useInputButton.textContent = '使用此内容';
+            useInputButton.style.padding = '5px 10px';
+            useInputButton.style.backgroundColor = '#FF9800';
+            useInputButton.style.color = 'white';
+            useInputButton.style.border = 'none';
+            useInputButton.style.borderRadius = '4px';
+            useInputButton.style.cursor = 'pointer';
+            useInputButton.style.marginTop = '5px';
+            useInputButton.onclick = function() {
+                const content = pasteInput.value;
+                if (content) {
+                    // 保存到我们的变量
+                    savedClipboardData = content;
+                    
+                    // 获取当前焦点元素
+                    const activeElement = document.activeElement;
+                    const isInput = activeElement.tagName === 'INPUT' || 
+                                   activeElement.tagName === 'TEXTAREA' || 
+                                   activeElement.isContentEditable;
+                    
+                    if (isInput && activeElement !== pasteInput) {
+                        insertTextAtCursor(activeElement, content);
+                        useInputButton.textContent = '已使用!';
+                        setTimeout(() => {
+                            useInputButton.textContent = '使用此内容';
+                        }, 2000);
+                    } else {
+                        alert('请先点击目标输入框，再点击"使用此内容"按钮');
+                    }
+                }
+            };
+            
+            // 添加按钮和输入框到容器
+            buttonContainer.appendChild(copyButton);
+            buttonContainer.appendChild(pasteButton);
+            buttonContainer.appendChild(pasteInput);
+            buttonContainer.appendChild(useInputButton);
+            
+            // 添加容器到页面
+            document.body.appendChild(buttonContainer);
+        }
+        
+        // 执行所有功能
+        enableTextSelection();
+        handleCopyEvent();
+        handlePasteEvent();
+        enableContextMenu();
+        removeEventHandlers();
+        observeDOMChanges();
+        
+        // 在DOM加载完成后添加按钮
+        document.addEventListener('DOMContentLoaded', function() {
+            addCopyPasteButtons();
+        });
+        
+        console.log('头歌实践教学平台复制粘贴功能增强已启用！(支持外部复制)');
+    }
+    
+    // 在文档开始加载时执行
+    enableCopyAndPaste();
+})();
